@@ -1,0 +1,156 @@
+@inject ProjectorControllerService Controller
+
+<div class="projector-remote">
+    @if (!string.IsNullOrWhiteSpace(Title))
+    {
+        <h1>@Title</h1>
+    }
+
+    <div class="mb-4">
+        <h4>Connection</h4>
+        <div class="row g-2">
+            <div class="col-md-3">
+                <label class="form-label">Host</label>
+                <input class="form-control" @bind="connection.Host" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Port</label>
+                <input type="number" class="form-control" @bind="connection.Port" />
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <div class="form-check">
+                    <input id="https" type="checkbox" class="form-check-input" @bind="connection.UseHttps" />
+                    <label class="form-check-label" for="https">HTTPS</label>
+                </div>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <div class="form-check">
+                    <input id="sim" type="checkbox" class="form-check-input" @bind="useSimulator" />
+                    <label class="form-check-label" for="sim">Simulator mode</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-2 mt-1">
+            <div class="col-md-3">
+                <label class="form-label">Username</label>
+                <input class="form-control" @bind="connection.Username" disabled="@useSimulator" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Password</label>
+                <input type="password" class="form-control" @bind="connection.Password" disabled="@useSimulator" />
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                <button class="btn btn-primary" @onclick="ConnectAsync" disabled="@isBusy">Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="mb-4">
+        <h4>Remote Control</h4>
+        <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-success" @onclick="PowerOnAsync" disabled="@(!Controller.IsConnected || isBusy)">Power On</button>
+            <button class="btn btn-danger" @onclick="PowerOffAsync" disabled="@(!Controller.IsConnected || isBusy)">Power Off</button>
+            <button class="btn btn-warning" @onclick="ToggleMuteAsync" disabled="@(!Controller.IsConnected || isBusy)">
+                @(Controller.Status.IsMuted ? "Unmute" : "Mute")
+            </button>
+            <select class="form-select source-picker" @bind="selectedSource" disabled="@(!Controller.IsConnected || isBusy)">
+                @foreach (var source in _sources)
+                {
+                    <option value="@source">@source</option>
+                }
+            </select>
+            <button class="btn btn-secondary" @onclick="SetSourceAsync" disabled="@(!Controller.IsConnected || isBusy)">Set Source</button>
+            <button class="btn btn-outline-secondary" @onclick="RefreshAsync" disabled="@(!Controller.IsConnected || isBusy)">Refresh</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">Status</h5>
+            <p class="mb-1"><strong>Connected:</strong> @Controller.Status.IsConnected</p>
+            <p class="mb-1"><strong>Power:</strong> @(Controller.Status.IsPoweredOn ? "On" : "Off")</p>
+            <p class="mb-1"><strong>Mute:</strong> @(Controller.Status.IsMuted ? "On" : "Off")</p>
+            <p class="mb-1"><strong>Source:</strong> @Controller.Status.ActiveSource</p>
+            <p class="mb-0"><strong>Last Response:</strong> @Controller.Status.LastResponse (@Controller.Status.LastUpdatedUtc.LocalDateTime)</p>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string? Title { get; set; } = "Epson Projector Web Remote";
+
+    [Parameter]
+    public IReadOnlyList<string>? Sources { get; set; }
+
+    [Parameter]
+    public EventCallback<ProjectorStatus> OnStatusChanged { get; set; }
+
+    private readonly string[] _defaultSources = new[] { "HDMI1", "HDMI2", "VGA", "LAN" };
+    private IReadOnlyList<string> _sources = Array.Empty<string>();
+    private ProjectorConnectionOptions connection = new();
+    private string selectedSource = "HDMI1";
+    private bool useSimulator = true;
+    private bool isBusy;
+
+    protected override void OnParametersSet()
+    {
+        _sources = Sources is { Count: > 0 } ? Sources : _defaultSources;
+        if (!_sources.Contains(selectedSource, StringComparer.OrdinalIgnoreCase))
+        {
+            selectedSource = _sources[0];
+        }
+    }
+
+    private async Task ConnectAsync()
+    {
+        await ExecuteAsync(() => Controller.ConnectAsync(connection, useSimulator));
+    }
+
+    private async Task PowerOnAsync()
+    {
+        await ExecuteAsync(() => Controller.PowerOnAsync());
+    }
+
+    private async Task PowerOffAsync()
+    {
+        await ExecuteAsync(() => Controller.PowerOffAsync());
+    }
+
+    private async Task ToggleMuteAsync()
+    {
+        await ExecuteAsync(() => Controller.SetMuteAsync(!Controller.Status.IsMuted));
+    }
+
+    private async Task SetSourceAsync()
+    {
+        await ExecuteAsync(() => Controller.SetSourceAsync(selectedSource));
+    }
+
+    private async Task RefreshAsync()
+    {
+        await ExecuteAsync(async () =>
+        {
+            await Controller.RefreshAsync();
+            return ProjectorCommandResult.Ok("Status refreshed.");
+        });
+    }
+
+    private async Task ExecuteAsync(Func<Task<ProjectorCommandResult>> action)
+    {
+        isBusy = true;
+        try
+        {
+            await action();
+            if (OnStatusChanged.HasDelegate)
+            {
+                await OnStatusChanged.InvokeAsync(Controller.Status);
+            }
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}
